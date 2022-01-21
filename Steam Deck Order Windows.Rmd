@@ -1,0 +1,159 @@
+---
+title: "An Exploratory Analysis Into Steam Deck Order Windows"
+author: "wave"
+date: "1/19/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE, 
+                      fig.width=7, 
+                      results = 'asis')
+
+library(ggplot2)
+library(dplyr)
+library(purrr)
+library(knitr)
+library(tidyr)
+library(zoo)
+
+load('data.R')
+
+colors <- wesanderson::wes_palette('BottleRocket2', n = 5)
+
+theme_steam <- function(){
+  theme_bw()
+}
+    
+locationProps <- redditResponses %>% 
+  count(location) %>% 
+  mutate(p = n/sum(n))
+
+capProps <- redditResponses %>% 
+  count(capacity) %>% 
+  mutate(p = n/sum(n))
+
+formatPerc <- function(num){
+    paste0(round(num * 100, 1), '%')
+}
+```
+
+## Background
+
+With the launch of the Deck, Valve allocated different regions different queues and their own "pot" of devices. As such, availability of early slots was limited and many are still left in the dark as to what time they may receive the chance to purchase their own Deck. In this analysis, I aim to compute rough estimates of how "far along in line" a user is with a given 
+
+# Queue Insights
+## United States
+```{r}
+
+capLocPlot <- function(loc){
+redditResponses %>% 
+  filter(!estimate %in% c('After Q2 (No change)')) %>%
+  filter(location == loc) %>% 
+  ggplot(aes(x = orderTime,
+             y = estimate,
+             color = estimate)) +
+    theme_steam() +
+    geom_boxplot(alpha = 0.5, color = 'lightgrey') +
+    geom_jitter(width = 0, height = 0.25, size = 0.5) +
+    scale_x_datetime(limits = c(min(redditResponses$orderTime),
+                                min(redditResponses$orderTime) + 60 * 120)) +
+    xlab('Order Time') + ylab('Shipping Window') +
+    # labs(title = 'Shipping Windows in the First Two Hours of Sales') +
+    theme(legend.position = 'none') +
+    scale_color_manual(values = colors) +
+    facet_grid(capacity ~ location)}
+
+print(capLocPlot('US'))
+```
+
+The US was the region with the most demand for the Deck, with `r formatPerc(locationProps[3, 'p'])` of recorded orders. (`r locationProps[3, 'n']`) By far, purchasers went for the priciest 512 GB model - with the lower tier 64 GB EMMC and 256 GB NVME models, windows sold out much slower, to an extent that a Q1 64 GB model could still be had 20 minutes into the purchasing window, while 512 GB Q1 models sold out after only seven minutes of sales.
+
+```{r}
+redditResponses %>% 
+  filter(!estimate %in% c('After Q2 (No change)')) %>%
+  ggplot(aes(x = orderTime, fill = capacity)) +
+    geom_density(alpha = 0.35, adjust = 0.45) +
+    theme_steam() +
+    scale_x_datetime(limits = c(min(redditResponses$orderTime),
+                                min(redditResponses$orderTime) + 60 * 120)) +
+    scale_fill_manual(values = colors,
+                      name = 'Capacity') +
+    xlab('Order Time') + ylab('Density')
+```
+
+## European Union
+```{r}
+print(capLocPlot('EU'))
+```
+
+Buying a deck in the EU was comparatively a walk in the park. However, with `r formatPerc(locationProps[1, 'p'])` of all sales, it's obvious that demand was still quite present in the region - one mitigating factor may be the comparatively later launch. With a release time of 6 PM GMT, most of Central and Eastern Europe were well into the night, whereas US locales enjoyed a mid-morning launch. Many of those who would have purchased at the opening bell in Europe may have instead chosen to sleep on their decision.
+
+Because of this, Q1 512 GB models were still available in the EU even *after* the least-desirable 64 GB model had passed into Q2 in the US. 
+
+## United Kingdom
+
+# Where Am I in Relation to Others? ~(in~ ~the~ ~queue)~
+
+```{r}
+redditResponses %>% 
+    split(data.frame(.$location, .$capacity)) -> responseSplit
+
+responseSplit <- do.call(cbind,
+                         lapply(responseSplit, 
+                                function(x){as.POSIXct(quantile(x$orderTime, probs = seq(0.05, 0.95, 0.05)))})) %>% 
+  as.data.frame() # %>% 
+  # mutate(
+  #   across(everything(),
+  #          ~ as.POSIXct(., origin = lubridate::origin))
+  # )
+
+kable(responseSplit[ ,c(3, 6, 9)],
+      caption = "Order Percentiles in the US")
+kable(responseSplit[ ,c(1, 4, 7)],
+      caption = "Order Percentiles in the EU")
+kable(responseSplit[ ,c(2, 5, 8)],
+      caption = "Order Percentiles in the UK")
+```
+
+```{r}
+redditResponses %>% 
+  count(location, capacity, estimate) %>% 
+  group_by(location, capacity) %>% 
+  arrange(location, capacity, estimate) %>% 
+  mutate(
+      percentage = n/sum(n),
+      percentile = rollapplyr(percentage, 6, sum, partial = TRUE)
+  ) %>% 
+  select(-c(percentage, n)) %>% 
+  pivot_wider(names_from = capacity,
+              values_from = percentile) %>% 
+  kable(digits = 2,
+        caption = "Corresponding Window Percentiles by Capacity")
+```
+
+
+# Miscellaneous Graphs
+
+```{r}
+redditResponses %>% 
+    filter(!estimate %in% c('After Q2 (No change)')) %>%
+    filter(capacity == '64 GB') %>% 
+    ggplot(aes(x = orderTime,
+               y = estimate,
+               color = estimate)) +
+    theme_steam() +
+    geom_boxplot(alpha = 0.5, color = 'lightgrey') +
+    geom_jitter(width = 0, height = 0.25, size = 0.5) +
+    scale_x_datetime(limits = c(min(redditResponses$orderTime),
+                                min(redditResponses$orderTime) + 60 * 60 * 24)) +
+    xlab('Order Time') + ylab('Shipping Window') +
+    # labs(title = 'Shipping Windows in the First Two Hours of Sales') +
+    theme(legend.position = 'none') +
+    scale_color_manual(values = colors) +
+    facet_grid(location ~ capacity) +
+    labs(title = '64 GB Models in the 24 Hours After Launch')
+```
+
+
